@@ -171,7 +171,8 @@ function escText(run, raw) {
 // surrogates in the href).
 function cleanUrl(href) {
   try {
-    return encodeURI(href).replace(/%25/g, '%');
+    const u = encodeURI(href);
+    return u.indexOf('%25') === -1 ? u : u.replace(/%25/g, '%');
   } catch {
     return null;
   }
@@ -182,7 +183,6 @@ function firstCpLen(s) {
   const c = s.charCodeAt(0);
   return c >= 0xD800 && c <= 0xDBFF ? 2 : 1;
 }
-// Length in code units of the first code point of s.
 
 // Split a table row on unescaped pipes, trimming cells and dropping a
 // leading/trailing empty cell from edge pipes.
