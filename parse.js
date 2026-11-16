@@ -410,6 +410,8 @@ const RE_LIST_TASK = /^\[[ xX]\][ \t]+/;
 const RE_LIST_CHECKBOX = /\[[ xX]\]/;
 const RE_ANY_LINE = /\n.*\n/;
 const RE_DOUBLE_BLANK = /\n[ \t]*\n[ \t]*$/;
+// A table delimiter line, tested sticky at the second line's start.
+const RE_TABLE_DELIM_LINE = / {0,3}[:| \-]*-[ :|\-]*(?:\n|$)/y;
 const RE_TABLE_DELIM = /[:|]/;
 const RE_TABLE_ALIGN_CHARS = /^\||\| *$/g;
 const RE_TABLE_ROW_TAIL = /\n[ \t]*$/;
@@ -782,10 +784,16 @@ class Lexer {
         }
         continue;
       }
-      if (token = this.tokTable(src)) {
-        src = src.substring(token.raw.length);
-        tokens.push(token);
-        continue;
+      // A table's delimiter is its second line: only run the table pattern
+      // when that line is made of | : - and spaces and contains a dash.
+      const tnl = src.indexOf('\n');
+      if (tnl !== -1) {
+        RE_TABLE_DELIM_LINE.lastIndex = tnl + 1;
+        if (RE_TABLE_DELIM_LINE.test(src) && (token = this.tokTable(src))) {
+          src = src.substring(token.raw.length);
+          tokens.push(token);
+          continue;
+        }
       }
       // A setext underline is a line of = or - before the next blank line.
       // One scan finds whichever comes first: a blank line (no underline
