@@ -1395,7 +1395,7 @@ Lexer.prototype.tokenizeInlines = function (src, textMode) {
     }
     if (token = this.tokInlineText(src)) {
       src = src.substring(token.raw.length);
-      if (token.raw.slice(-1) !== '_') prevChar = token.raw.slice(-1);
+      if (token.raw.charCodeAt(token.raw.length - 1) !== 95) prevChar = token.raw[token.raw.length - 1];
       keepPrevChar = true;
       out += textMode || token.escaped || token.clean ? token.text : esc(token.text);
       continue;
