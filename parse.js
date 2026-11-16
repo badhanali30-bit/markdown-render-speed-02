@@ -335,9 +335,9 @@ const RE_DEF = compose(
 // Setext heading: a paragraph-like run followed by = or - underline.
 const LHEADING_BASE =
   '^(?!bull |blockCode|fences|blockquote|heading|html|table)((?:.|\\n(?!\\s*?\\n|bull |fences|blockquote|heading|hr|html|table))+?)\\n {0,3}(=+|-+)[ \\t]*(?:\\n+|$)';
-// First line that could be a setext underline (newline, ≤3 spaces, = or -).
-const RE_LHEADING_CAND = /\n {0,3}[=-]/g;
-const RE_BLANK_AT = /\n[ \t]*(?:\n|$)/;
+// Blank line OR first line that could be a setext underline (group 1);
+// one exec finds whichever comes first in the paragraph.
+const RE_SETEXT_OR_BLANK = /\n[ \t]*(?:\n|$)|(\n {0,3}[=-])/g;
 const RE_LHEADING = compose(LHEADING_BASE)
   .rep(/bull/g, BULL_SRC)
   .rep(/blockCode/g, /(?: {4}| {0,3}\t)/)
@@ -663,22 +663,20 @@ function isLabelEndInsideToken(src, label, labelStart) {
 }
 
 // Last `*` / `_` / `~` runs that can close emphasis or strikethrough, scanned
-// once per inline pass and shared by every opener in it.
+// once per inline pass and shared by every opener in it. A regex finds the
+// runs; only the character before each run is inspected.
+const RE_CLOSER_RUNS = /([*_~])\1*/g;
 function scanClosers(src) {
   const frame = { maskedSrc: src, ast: -1, und: -1, del: -1 };
-  const len = src.length;
-  for (let i = 0; i < len; i++) {
-    const ch = src[i];
-    if (ch !== '*' && ch !== '_' && ch !== '~') continue;
-    const prev = i === 0 ? '\n' : src[i - 1];
-    let j = i + 1;
-    while (j < len && src[j] === ch) j++;
-    if (prev !== ' ' && prev !== '\t' && prev !== '\n' && prev !== '\r' && prev !== '\f') {
-      if (ch === '~') frame.del = i;
-      else if (ch === '*') frame.ast = i;
-      else frame.und = i;
-    }
-    i = j - 1;
+  RE_CLOSER_RUNS.lastIndex = 0;
+  let m;
+  while ((m = RE_CLOSER_RUNS.exec(src)) !== null) {
+    const prev = m.index === 0 ? '\n' : src[m.index - 1];
+    if (prev === ' ' || prev === '\t' || prev === '\n' || prev === '\r' || prev === '\f') continue;
+    const ch = m[1];
+    if (ch === '~') frame.del = m.index;
+    else if (ch === '*') frame.ast = m.index;
+    else frame.und = m.index;
   }
   return frame;
 }
@@ -790,17 +788,14 @@ class Lexer {
         continue;
       }
       // A setext underline is a line of = or - before the next blank line.
-      // First look for a cheap candidate (newline + spaces + = or -); only
-      // then find the blank line to check the candidate precedes it.
-      RE_LHEADING_CAND.lastIndex = 0;
-      const cand = RE_LHEADING_CAND.exec(src);
-      if (cand) {
-        const blankAt = RE_BLANK_AT.exec(src);
-        if ((!blankAt || cand.index < blankAt.index) && (token = this.tokLheading(src))) {
-          src = src.substring(token.raw.length);
-          tokens.push(token);
-          continue;
-        }
+      // One scan finds whichever comes first: a blank line (no underline
+      // in this paragraph) or a candidate underline line.
+      RE_SETEXT_OR_BLANK.lastIndex = 0;
+      const sb = RE_SETEXT_OR_BLANK.exec(src);
+      if (sb && sb[1] !== undefined && (token = this.tokLheading(src))) {
+        src = src.substring(token.raw.length);
+        tokens.push(token);
+        continue;
       }
       const cutSrc = src;
       if (this.state.top && (token = this.tokParagraph(cutSrc))) {
