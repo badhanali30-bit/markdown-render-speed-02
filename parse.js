@@ -1488,7 +1488,14 @@ Lexer.prototype.tokEmStrong = function (src, prevChar = '', textMode) {
   const srcStart = maskedSrc.length - src.length;
   let runStart = srcStart;
   while (runStart > 0 && maskedSrc[runStart - 1] === delimChar) runStart--;
-  const runPrevChar = lastCp(maskedSrc.slice(Math.max(0, runStart - 2), runStart));
+  let runPrevChar = '';
+  if (runStart > 0) {
+    const c = maskedSrc.charCodeAt(runStart - 1);
+    runPrevChar = (c >= 0xDC00 && c <= 0xDFFF && runStart >= 2 &&
+      maskedSrc.charCodeAt(runStart - 2) >= 0xD800 && maskedSrc.charCodeAt(runStart - 2) <= 0xDBFF)
+      ? maskedSrc.slice(runStart - 2, runStart)
+      : maskedSrc[runStart - 1];
+  }
   const runPrevPunct = runPrevChar === '*' || runPrevChar === '_' || !!PUNCT_START.exec(runPrevChar);
   if (runStart < srcStart) prevChar = runPrevChar;
   const prevPunct = runStart < srcStart ? runPrevPunct : !!PUNCT_START.exec(prevChar);
@@ -1640,7 +1647,7 @@ const RE_FAST_TEXT = /^[^\\<!\[`*~_\n]+/;
 
 Lexer.prototype.tokInlineText = function (src) {
   const fast = RE_FAST_TEXT.exec(src);
-  if (fast && fast[0].length >= 8) {
+  if (fast) {
     let chunk = fast[0];
     // Two trailing spaces before a newline are a hard break, not text.
     if (src[chunk.length] === '\n') {
@@ -1648,7 +1655,7 @@ Lexer.prototype.tokInlineText = function (src) {
       if (t.length === 0) return this.tokInlineTextSlow(src);
       chunk = t;
     }
-    if (chunk.length >= 8 && chunk.indexOf('@') === -1 && chunk.indexOf('www.') === -1 &&
+    if (chunk.indexOf('@') === -1 && chunk.indexOf('www.') === -1 &&
         chunk.indexOf('://') === -1 && chunk.indexOf('mailto:') === -1 && chunk.indexOf('xmpp:') === -1) {
       const escaped = this.state.inRawBlock;
       // No & < > " ' anywhere: unescapeNumeric and esc are both identity.
