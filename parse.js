@@ -182,14 +182,7 @@ function firstCpLen(s) {
   const c = s.charCodeAt(0);
   return c >= 0xD800 && c <= 0xDBFF ? 2 : 1;
 }
-// Last code point of a short string.
-function lastCp(s) {
-  const n = s.length;
-  if (n === 0) return '';
-  const c = s.charCodeAt(n - 1);
-  if (c >= 0xDC00 && c <= 0xDFFF && n >= 2 && s.charCodeAt(n - 2) >= 0xD800 && s.charCodeAt(n - 2) <= 0xDBFF) return s.slice(-2);
-  return s[n - 1];
-}
+// Length in code units of the first code point of s.
 
 // Split a table row on unescaped pipes, trimming cells and dropping a
 // leading/trailing empty cell from edge pipes.
@@ -342,7 +335,8 @@ const RE_DEF = compose(
 // Setext heading: a paragraph-like run followed by = or - underline.
 const LHEADING_BASE =
   '^(?!bull |blockCode|fences|blockquote|heading|html|table)((?:.|\\n(?!\\s*?\\n|bull |fences|blockquote|heading|hr|html|table))+?)\\n {0,3}(=+|-+)[ \\t]*(?:\\n+|$)';
-const RE_LHEADING_GUARD = /\n {0,3}(?:=+|-+)[ \t]*(?:\n|$)/;
+// First line that could be a setext underline (newline, ≤3 spaces, = or -).
+const RE_LHEADING_CAND = /\n {0,3}[=-]/g;
 const RE_BLANK_AT = /\n[ \t]*(?:\n|$)/;
 const RE_LHEADING = compose(LHEADING_BASE)
   .rep(/bull/g, BULL_SRC)
@@ -795,15 +789,18 @@ class Lexer {
         tokens.push(token);
         continue;
       }
-      // A setext underline must exist before the next blank line; the
-      // paragraph the lheading pattern could match cannot cross one, so the
-      // guard only scans that far instead of the whole remainder.
-      const blankAt = RE_BLANK_AT.exec(src);
-      const guardSrc = blankAt ? src.slice(0, blankAt.index + 1) : src;
-      if (RE_LHEADING_GUARD.test(guardSrc) && (token = this.tokLheading(src))) {
-        src = src.substring(token.raw.length);
-        tokens.push(token);
-        continue;
+      // A setext underline is a line of = or - before the next blank line.
+      // First look for a cheap candidate (newline + spaces + = or -); only
+      // then find the blank line to check the candidate precedes it.
+      RE_LHEADING_CAND.lastIndex = 0;
+      const cand = RE_LHEADING_CAND.exec(src);
+      if (cand) {
+        const blankAt = RE_BLANK_AT.exec(src);
+        if ((!blankAt || cand.index < blankAt.index) && (token = this.tokLheading(src))) {
+          src = src.substring(token.raw.length);
+          tokens.push(token);
+          continue;
+        }
       }
       const cutSrc = src;
       if (this.state.top && (token = this.tokParagraph(cutSrc))) {
