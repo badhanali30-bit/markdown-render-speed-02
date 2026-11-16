@@ -177,11 +177,6 @@ function cleanUrl(href) {
   }
 }
 
-// Code-point count of a (usually ASCII) string, without spreading it.
-function cpCount(s) {
-  if (!/[\uD800-\uDBFF]/.test(s)) return s.length;
-  return [...s].length;
-}
 // Length in code units of the first code point of s.
 function firstCpLen(s) {
   const c = s.charCodeAt(0);
@@ -268,6 +263,16 @@ function findClosingBracket(str, pair) {
     else if (str[i] === pair[1] && (depth--, depth < 0)) return i;
   }
   return depth > 0 ? -2 : -1;
+}
+
+// Blank line test equivalent to `!s.trim()` for the whitespace a list line
+// can realistically hold (space, tab, \v, \f, \r, nbsp), without allocating.
+function isBlankLine(s) {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c !== 32 && c !== 9 && c !== 11 && c !== 12 && c !== 13 && c !== 160) return false;
+  }
+  return true;
 }
 
 // Expand tabs to spaces, counting from column `col`.
@@ -1066,7 +1071,7 @@ Lexer.prototype.tokList = function (src) {
       if (lead0 && lead0[0].includes('\t')) line = expandTabs(lead0[0], bulletIndent) + firstLine.slice(lead0[0].length);
       const nli = src.indexOf('\n');
       let nextLine = nli === -1 ? src : src.slice(0, nli);
-      let blankLine = !line.trim();
+      let blankLine = isBlankLine(line);
       let indent = 0;
       if (blankLine) {
         indent = bulletIndent + 1;
@@ -1099,6 +1104,7 @@ Lexer.prototype.tokList = function (src) {
             nextLineWithoutTabs = expandTabs(lead[0]) + nextLine.slice(lead[0].length);
           }
           const ns = nextLineWithoutTabs.search(RE_NON_SPACE);
+          const blank = isBlankLine(nextLineWithoutTabs);
           const first = ns === -1 ? '' : nextLineWithoutTabs[ns];
           // None of the six break tests can match unless the first
           // non-space character starts one of them.
@@ -1112,7 +1118,7 @@ Lexer.prototype.tokList = function (src) {
             if (nextBulletRegex.test(nextLine)) break;
             if (hrRegex.test(nextLine)) break;
           }
-          if (ns >= indent || !nextLine.trim()) {
+          if (ns >= indent || blank) {
             itemContents += '\n' + nextLineWithoutTabs.slice(indent);
           } else {
             if (blankLine) break;
@@ -1128,7 +1134,7 @@ Lexer.prototype.tokList = function (src) {
               : nextLine;
             itemContents += '\n' + continuation;
           }
-          blankLine = !nextLine.trim();
+          blankLine = blank;
           src = src.slice(rawLine.length + 1);
           line = nextLineWithoutTabs.slice(indent);
         }
@@ -1391,7 +1397,7 @@ Lexer.prototype.tokenizeInlines = function (src, textMode) {
       src = src.substring(token.raw.length);
       if (token.raw.slice(-1) !== '_') prevChar = token.raw.slice(-1);
       keepPrevChar = true;
-      out += textMode ? token.text : (token.escaped ? token.text : esc(token.text));
+      out += textMode || token.escaped || token.clean ? token.text : esc(token.text);
       continue;
     }
     if (src) throw new Error('Infinite loop on byte: ' + src.charCodeAt(0));
@@ -1489,7 +1495,7 @@ Lexer.prototype.tokEmStrong = function (src, prevChar = '', textMode) {
   if (match[4] && prevChar.match(UNICODE_ALNUM)) return;
   const nextChar = match[1] || match[3] || '';
   if (!nextChar || !prevChar || prevPunct) {
-    const lLength = cpCount(match[0]) - 1;
+    const m0 = match[0]; const lLength = m0.length - 1 - (m0.charCodeAt(m0.length - 1) >= 0xDC00 && m0.charCodeAt(m0.length - 1) <= 0xDFFF ? 1 : 0);
     let rDelim, rLength, delimTotal = lLength, midDelimTotal = 0;
     const runLength = srcStart - runStart + lLength;
     const openerCanClose = !!runPrevChar.trim() && (!!nextChar || (delimChar === '*' && !runPrevPunct));
@@ -1505,7 +1511,7 @@ Lexer.prototype.tokEmStrong = function (src, prevChar = '', textMode) {
       if (match.index > lastPossibleInWindow) break;
       rDelim = match[1] || match[2] || match[3] || match[4] || match[5] || match[6];
       if (!rDelim) continue;
-      rLength = cpCount(rDelim);
+      rLength = rDelim.length;
       if (match[3] || match[4]) {
         delimTotal += rLength;
         continue;
@@ -1556,7 +1562,7 @@ Lexer.prototype.tokDel = function (src, prevChar = '', textMode) {
   let maskedSrc = this.getMasked();
   const nextChar = match[1] || '';
   if (!nextChar || !prevChar || PUNCT_START.exec(prevChar)) {
-    const lLength = cpCount(match[0]) - 1;
+    const m0 = match[0]; const lLength = m0.length - 1 - (m0.charCodeAt(m0.length - 1) >= 0xDC00 && m0.charCodeAt(m0.length - 1) <= 0xDFFF ? 1 : 0);
     let rDelim, rLength, delimTotal = lLength;
     const endReg = RE_DEL_R_DELIM;
     const lastPossible = this.cachedDelCloser(maskedSrc);
@@ -1569,7 +1575,7 @@ Lexer.prototype.tokDel = function (src, prevChar = '', textMode) {
       if (match.index > lastPossibleInWindow) break;
       rDelim = match[1] || match[2] || match[3] || match[4] || match[5] || match[6];
       if (!rDelim) continue;
-      rLength = cpCount(rDelim);
+      rLength = rDelim.length;
       if (rLength !== lLength) continue;
       if (match[3] || match[4]) {
         delimTotal += rLength;
@@ -1645,6 +1651,11 @@ Lexer.prototype.tokInlineText = function (src) {
     if (chunk.length >= 8 && chunk.indexOf('@') === -1 && chunk.indexOf('www.') === -1 &&
         chunk.indexOf('://') === -1 && chunk.indexOf('mailto:') === -1 && chunk.indexOf('xmpp:') === -1) {
       const escaped = this.state.inRawBlock;
+      // No & < > " ' anywhere: unescapeNumeric and esc are both identity.
+      if (chunk.indexOf('&') === -1 && chunk.indexOf('<') === -1 && chunk.indexOf('>') === -1 &&
+          chunk.indexOf('"') === -1 && chunk.indexOf("'") === -1) {
+        return { type: 'text', raw: chunk, text: chunk, escaped, clean: true };
+      }
       return { type: 'text', raw: chunk, text: escaped ? chunk : unescapeNumeric(chunk), escaped };
     }
   }
